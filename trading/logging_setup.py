@@ -32,3 +32,10 @@ def configure_logging(level: str = "INFO") -> None:
         stream=sys.stderr,
         force=True,
     )
+
+    # httpx logs a line per request at INFO, which would double the output and
+    # bury our own per-event lines. We already log every delivery outcome, so
+    # only its warnings and errors are worth surfacing. Raise the level with
+    # LOG_LEVEL=DEBUG when the raw request log is actually wanted.
+    if resolved > logging.DEBUG:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
