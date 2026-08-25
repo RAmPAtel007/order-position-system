@@ -13,7 +13,9 @@ import os
 from typing import Any
 
 import uvicorn
-from fastapi import Body, FastAPI, Response
+from fastapi import Body, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from trading.events import ValidationError, parse_event
 from trading.logging_setup import configure_logging
@@ -43,6 +45,24 @@ def create_app(store: PositionStore | None = None) -> FastAPI:
         summary="Maintains the net position per trading symbol in memory.",
     )
     app.state.store = store if store is not None else PositionStore()
+
+    @app.exception_handler(RequestValidationError)
+    def on_unreadable_body(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Report a body FastAPI could not even decode in our own shape.
+
+        Without this, malformed JSON and a bare ``null`` body would come
+        back in FastAPI's default ``{"detail": ...}`` format while our own
+        rejections used ``{"status": "rejected", ...}``. One shape for every
+        rejection means a client needs only one code path.
+        """
+        reason = "request body is not readable JSON"
+        LOGGER.warning("Rejected request to %s: %s", request.url.path, reason)
+        return JSONResponse(
+            status_code=HTTP_UNPROCESSABLE_CONTENT,
+            content={"status": "rejected", "reason": reason},
+        )
 
     # These handlers are deliberately synchronous (def, not async def).
     # FastAPI runs sync handlers in a worker thread pool, so ingesting events
