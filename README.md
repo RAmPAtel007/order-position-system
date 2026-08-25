@@ -413,6 +413,10 @@ Interactive API documentation is served at `/docs`.
 
 `GET /` serves a live, read-only dashboard at <http://127.0.0.1:8000>.
 
+![The dashboard after processing the supplied CSV: a KPI row reading 1,000 events
+applied across 20 symbols, 10 long and 10 short, above a diverging bar chart of net
+position per symbol, sorted from SBIN at +5,000 down to MARUTI at -4,750.](docs/dashboard.png)
+
 **This is beyond the stated scope** — a frontend is listed under non-goals — so
 it is built to cost nothing: one self-contained HTML file, **no new
 dependencies, no build step, no external requests**. It reads the same public
