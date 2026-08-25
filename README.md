@@ -95,6 +95,18 @@ rather than measuring elapsed time, so they are fast and cannot fail because
 the machine was momentarily busy. The one wall-clock assertion uses a bound
 loose enough that only a genuine regression can break it.
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request to `main`:
+
+- **Tests** — the full suite on Ubuntu across Python 3.10, 3.11, 3.12, and
+  3.13, plus Windows on 3.13, since that is where the services were developed.
+- **Smoke run** — starts the Position service, streams the real
+  `order_updates.csv` through both services, asserts all twenty net positions
+  match, then replays the entire feed and asserts nothing changed. This is the
+  idempotency guarantee checked end to end on every commit, not just in a unit
+  test.
+
 ---
 
 ## Architecture and the reasoning behind it
@@ -453,6 +465,10 @@ tests/                      188 tests (see the table above)
 data/
   order_updates.csv         Supplied assessment data (synthetic)
   sample_invalid.csv        Malformed rows, for demonstrating the skip path
+.github/workflows/ci.yml    Test matrix and end-to-end smoke run
+requirements.txt            Runtime dependencies
+requirements-dev.txt        Adds pytest
+pyproject.toml              Packaging, console scripts, pytest configuration
 ```
 
 ---

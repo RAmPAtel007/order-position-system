@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Run the whole matrix even if one combination fails, so a single
+      # version-specific problem does not hide the others.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # The services were developed on Windows; keep one job proving the
+          # suite still passes there, including the subprocess-based tests.
+          - os: windows-latest
+            python-version: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run the test suite
+        run: python -m pytest -v
+
+  smoke:
+    name: End-to-end smoke run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Start the Position service
+        run: |
+          python -m trading.position_service --port 8000 &
+          echo "POSITION_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Stream the supplied CSV through both services
+        # Throttling is disabled here so CI does not spend 20s pacing events;
+        # the rate limiter itself is covered by the unit tests.
+        run: |
+          python -m trading.order_update_service \
+            --csv data/order_updates.csv \
+            --target-url http://127.0.0.1:8000 \
+            --rate 0
+
+      - name: Verify the resulting positions
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8000/position") as response:
+              positions = json.load(response)
+
+          expected = {
+              "RELIANCE": 4500, "TCS": -3750, "HDFCBANK": 3000, "ICICIBANK": -2250,
+              "INFY": 1500, "BHARTIARTL": -750, "SBIN": 5000, "LT": -4250,
+              "ITC": 3500, "HINDUNILVR": -2750, "AXISBANK": 2000, "KOTAKBANK": -1250,
+              "BAJFINANCE": 500, "MARUTI": -4750, "SUNPHARMA": 4000, "NTPC": -3250,
+              "TATAMOTORS": 2500, "TATASTEEL": -1750, "ADANIENT": 1000,
+              "ASIANPAINT": -250,
+          }
+          assert positions == expected, f"unexpected positions: {positions}"
+          print(f"OK: {len(positions)} symbols match the expected net positions")
+          PY
+
+      - name: Verify that replaying the feed changes nothing
+        run: |
+          python -m trading.order_update_service \
+            --csv data/order_updates.csv \
+            --target-url http://127.0.0.1:8000 \
+            --rate 0
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8000/health") as response:
+              health = json.load(response)
+
+          assert health["applied_events"] == 1000, health
+          assert health["duplicate_events"] == 1000, health
+          print("OK: the replay was fully deduplicated, positions unchanged")
+          PY
+
+      - name: Stop the Position service
+        if: always()
+        run: kill "$POSITION_PID" || true
