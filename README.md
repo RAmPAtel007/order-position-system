@@ -539,13 +539,32 @@ pyproject.toml              Packaging, console scripts, pytest configuration
 
 ---
 
-## Use of AI-assisted tools
+## How this was built, and use of AI-assisted tools
 
-This solution was developed with AI assistance (Claude). The assistant was used
-to draft the implementation and test suite, and I directed the design decisions,
-reviewed all output, and verified behaviour by running the services and the
-tests. Specific points where testing changed the design are worth noting, since
-they show what the verification actually caught:
+**Development approach.** This was built in a single focused session rather than
+across several days, so the commit timestamps span under an hour. The fourteen
+commits are sequenced by architectural layer — contract, store, reader,
+throttle, transport, the two services, tests, docs, CI — because that ordering
+is what makes the history readable, not because the work happened in neat
+stages. The dashboard is last because it was added once the assessment
+requirements were complete, and it is optional.
+
+Every commit was checked out and verified: each one imports cleanly, and from
+the test commit onward the full suite passes at that commit. To spot-check any
+of them without disturbing your working tree:
+
+```bash
+git worktree add ../check <commit-sha>
+```
+
+then run `python -m pytest -q` in `../check`, and `git worktree remove ../check`
+when done.
+
+**AI assistance.** This solution was developed with AI assistance (Claude). The
+assistant was used to draft the implementation and test suite; I directed the
+design decisions, reviewed all output, and verified behaviour by running the
+services and the tests. Specific points where testing changed the design are
+worth noting, since they show what the verification actually caught:
 
 - The first rate limiter used fixed-interval pacing alone. Measuring it showed a
   one-second window could hold 51 events at an exactly-aligned boundary, so the
