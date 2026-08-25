@@ -27,4 +27,10 @@ include = ["trading*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
-filterwarnings = ["error::DeprecationWarning:trading.*"]
+filterwarnings = [
+    # Our own code must stay deprecation-free.
+    "error::DeprecationWarning:trading.*",
+    # Noise from the installed starlette/httpx versions, not from us.
+    "ignore::UserWarning",
+    "ignore:.*httpx.*:DeprecationWarning",
+]
