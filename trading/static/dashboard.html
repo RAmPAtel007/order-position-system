@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Positions · Position Maintaining Service</title>
+<style>
+/* ---------------------------------------------------------------------------
+   Tokens. Light is the base; dark is a selected set of steps for the dark
+   surface, not an automatic inversion. Declared under both the OS media query
+   and the [data-theme] scope so the in-page toggle wins in either direction.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  --plane:            #f9f9f7;
+  --surface:          #fcfcfb;
+  --surface-sunken:   #f3f3f0;
+
+  --ink:              #0b0b0b;
+  --ink-secondary:    #52514e;
+  --ink-muted:        #898781;
+
+  --hairline:         #e1e0d9;
+  --baseline:         #c3c2b7;
+  --ring:             rgba(11, 11, 11, 0.10);
+
+  /* Diverging pair: warm/cool poles either side of a neutral midpoint.
+     Blue/red rather than the conventional finance green/red, which measures
+     ΔE 4.1 under deuteranopia and is effectively one colour to ~8% of men. */
+  --long:             #2a78d6;
+  --short:            #e34948;
+  --zero:             #c3c2b7;
+
+  --good:             #0ca30c;
+  --critical:         #d03b3b;
+
+  --radius:           10px;
+  --bar-end:          4px;
+  --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 4px 12px rgba(11, 11, 11, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane:          #0d0d0d;
+    --surface:        #1a1a19;
+    --surface-sunken: #131312;
+    --ink:            #ffffff;
+    --ink-secondary:  #c3c2b7;
+    --ink-muted:      #898781;
+    --hairline:       #2c2c2a;
+    --baseline:       #383835;
+    --ring:           rgba(255, 255, 255, 0.10);
+    --long:           #3987e5;
+    --short:          #e66767;
+    --zero:           #383835;
+    --good:           #0ca30c;
+    --critical:       #e66767;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:          #0d0d0d;
+  --surface:        #1a1a19;
+  --surface-sunken: #131312;
+  --ink:            #ffffff;
+  --ink-secondary:  #c3c2b7;
+  --ink-muted:      #898781;
+  --hairline:       #2c2c2a;
+  --baseline:       #383835;
+  --ring:           rgba(255, 255, 255, 0.10);
+  --long:           #3987e5;
+  --short:          #e66767;
+  --zero:           #383835;
+  --good:           #0ca30c;
+  --critical:       #e66767;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 20px 64px;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell { max-width: 1080px; margin: 0 auto; }
+
+/* --- Header ---------------------------------------------------------------- */
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px 20px;
+  padding: 28px 0 20px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--ink-secondary);
+  font-size: 13px;
+}
+
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Status is never colour alone: a dot, an icon glyph, and a text label. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px 5px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  font-weight: 520;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  flex: none;
+}
+
+.status[data-state="live"] .status-dot { background: var(--good); }
+.status[data-state="error"] .status-dot { background: var(--critical); }
+.status[data-state="error"] { color: var(--critical); border-color: var(--critical); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .status[data-state="live"] .status-dot { animation: pulse 2s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+button {
+  font: inherit;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+button:hover { background: var(--surface-sunken); border-color: var(--baseline); }
+button:focus-visible { outline: 2px solid var(--long); outline-offset: 2px; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+/* --- Figures --------------------------------------------------------------- */
+
+.figures {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(auto-fit, minmax(96px, 1fr));
+  gap: 1px;
+  background: var(--hairline);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+
+.figure { background: var(--surface); padding: 16px 18px; }
+
+.figure-label {
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 520;
+  margin-bottom: 4px;
+}
+
+/* Proportional figures on standalone values; tabular is for aligned columns. */
+.figure-value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.figure.hero .figure-value { font-size: 48px; font-weight: 640; letter-spacing: -0.03em; }
+.figure-note { color: var(--ink-muted); font-size: 11.5px; margin-top: 2px; }
+
+.swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: baseline;
+}
+.swatch.long { background: var(--long); }
+.swatch.short { background: var(--short); }
+.swatch.flat { background: var(--zero); }
+
+/* --- Filter row: one row, above everything it scopes ----------------------- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.search {
+  flex: 1 1 200px;
+  min-width: 160px;
+  max-width: 280px;
+  padding: 7px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.search::placeholder { color: var(--ink-muted); }
+.search:focus-visible { outline: 2px solid var(--long); outline-offset: 1px; border-color: transparent; }
+
+.segmented { display: flex; gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
+.segmented button { border: none; border-radius: 0; padding: 6px 12px; }
+
+.spacer { flex: 1 1 auto; }
+
+/* --- Cards ----------------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  padding: 16px 18px 12px;
+}
+
+.card-title { font-size: 14.5px; font-weight: 600; margin: 0; }
+.card-sub { color: var(--ink-secondary); font-size: 12.5px; margin: 0; }
+
+.legend { margin-left: auto; display: flex; gap: 14px; color: var(--ink-secondary); font-size: 12.5px; }
+.legend span { display: inline-flex; align-items: center; }
+
+.card-body { padding: 4px 18px 18px; }
+
+/* --- Diverging bar chart --------------------------------------------------- */
+
+.chart { position: relative; }
+
+/* The zero baseline is the chart's spine: a solid hairline, never dashed.
+   It has to land on the centre of the *track* column, not the centre of the
+   card, so the offset subtracts the symbol column and gaps. */
+.zero-line {
+  position: absolute;
+  top: 0;
+  bottom: 22px;
+  left: calc(120px + (100% - 120px) / 2);
+  width: 1px;
+  background: var(--baseline);
+  pointer-events: none;
+}
+.chart.compact .zero-line { left: calc(96px + (100% - 166px) / 2); }
+
+.row {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 0;
+  border-radius: 6px;
+  cursor: default;
+}
+.row:hover, .row:focus-visible { background: var(--surface-sunken); outline: none; }
+.row:focus-visible { box-shadow: inset 0 0 0 2px var(--long); }
+
+.row-symbol {
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--ink-secondary);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hit target comfortably exceeds the 18px mark. */
+.track { position: relative; height: 26px; }
+
+.bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 18px;
+  min-width: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar { transition: width 400ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+}
+
+/* Square at the baseline, 4px rounded at the data end. */
+.bar.long  { left: 50%; background: var(--long);  border-radius: 0 var(--bar-end) var(--bar-end) 0; }
+.bar.short { right: 50%; background: var(--short); border-radius: var(--bar-end) 0 0 var(--bar-end); }
+.bar.flat  { left: 50%; width: 2px; background: var(--zero); border-radius: 0; }
+
+.bar-value {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+  white-space: nowrap;
+}
+
+/* Compact layout: when the track is too narrow to hold a value at the bar tip
+   without overflowing it, the value moves to its own column instead. Measured
+   at render time, so the switch follows the actual text, not a guessed
+   breakpoint. */
+.chart.compact .row { grid-template-columns: 84px 1fr 58px; }
+
+.row-value {
+  font-size: 12px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The axis uses the same grid as a row, so its ticks sit under the track they
+   describe rather than under the whole card. */
+.axis {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.chart.compact .axis { grid-template-columns: 84px 1fr 58px; }
+
+.axis-track {
+  grid-column: 2;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+}
+.axis-track span:nth-child(2) { position: absolute; left: 50%; transform: translateX(-50%); }
+
+/* --- Table twin ------------------------------------------------------------ */
+
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+caption { text-align: left; color: var(--ink-secondary); font-size: 12.5px; padding: 0 0 10px; }
+th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--hairline); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-secondary); font-size: 12px; font-weight: 560; }
+tbody tr:last-child td { border-bottom: none; }
+td.value { font-weight: 560; }
+
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 560;
+  border: 1px solid var(--ring);
+  color: var(--ink-secondary);
+}
+
+/* --- Tooltip --------------------------------------------------------------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  padding: 8px 11px;
+  background: var(--ink);
+  color: var(--plane);
+  border-radius: 7px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+  max-width: 260px;
+}
+.tooltip[data-show="true"] { opacity: 1; }
+.tooltip b { font-weight: 620; }
+.tooltip .t-value { font-variant-numeric: tabular-nums; }
+
+/* --- States ---------------------------------------------------------------- */
+
+.empty { padding: 40px 18px; text-align: center; color: var(--ink-secondary); }
+.empty strong { display: block; color: var(--ink); margin-bottom: 4px; font-size: 14.5px; }
+
+/* Refetch holds the previous render rather than flashing a skeleton. */
+.stale { opacity: 0.55; }
+@media (prefers-reduced-motion: no-preference) {
+  .stale { transition: opacity 200ms ease; }
+}
+
+footer { color: var(--ink-muted); font-size: 12px; text-align: center; padding-top: 4px; }
+footer code { font-size: 11.5px; background: var(--surface-sunken); padding: 1px 5px; border-radius: 4px; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+@media (max-width: 620px) {
+  .figure.hero .figure-value { font-size: 36px; }
+  .legend { margin-left: 0; }
+}
+</style>
+</head>
+
+<body>
+<div class="shell">
+
+  <header>
+    <div>
+      <h1>Net positions</h1>
+      <p class="subtitle">Position Maintaining Service &middot; in-memory state</p>
+    </div>
+    <div class="header-actions">
+      <span class="status" id="status" data-state="loading" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Connecting</span>
+      </span>
+      <button id="pause" aria-pressed="false" title="Pause or resume polling">Pause</button>
+      <button id="theme" title="Switch between light and dark">Theme</button>
+    </div>
+  </header>
+
+  <section class="figures" aria-label="Summary">
+    <div class="figure hero">
+      <div class="figure-label">Events applied</div>
+      <div class="figure-value" id="fig-events">&mdash;</div>
+      <div class="figure-note" id="fig-dupes">&nbsp;</div>
+    </div>
+    <div class="figure">
+      <div class="figure-label">Symbols</div>
+      <div class="figure-value" id="fig-symbols">&mdash;</div>
+    </div>
+    <div class="figure">
+      <div class="figure-label"><span class="swatch long"></span>Long</div>
+      <div class="figure-value" id="fig-long">&mdash;</div>
+    </div>
+    <div class="figure">
+      <div class="figure-label"><span class="swatch short"></span>Short</div>
+      <div class="figure-value" id="fig-short">&mdash;</div>
+    </div>
+    <div class="figure">
+      <div class="figure-label"><span class="swatch flat"></span>Flat</div>
+      <div class="figure-value" id="fig-flat">&mdash;</div>
+    </div>
+  </section>
+
+  <div class="filters">
+    <input class="search" id="search" type="search" placeholder="Filter symbols&hellip;"
+           aria-label="Filter symbols by name" autocomplete="off">
+    <div class="segmented" role="group" aria-label="Filter by side">
+      <button data-side="all" aria-pressed="true">All</button>
+      <button data-side="long" aria-pressed="false">Long</button>
+      <button data-side="short" aria-pressed="false">Short</button>
+      <button data-side="flat" aria-pressed="false">Flat</button>
+    </div>
+    <div class="segmented" role="group" aria-label="Sort order">
+      <button data-sort="value" aria-pressed="true">By position</button>
+      <button data-sort="symbol" aria-pressed="false">A&ndash;Z</button>
+    </div>
+    <span class="spacer"></span>
+    <button id="toggle-table" aria-pressed="false" aria-controls="table-card">Table view</button>
+  </div>
+
+  <section class="card" aria-labelledby="chart-title">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title" id="chart-title">Net position by symbol</h2>
+        <p class="card-sub">Share quantity, signed. Bars diverge from zero.</p>
+      </div>
+      <div class="legend" aria-hidden="true">
+        <span><span class="swatch long"></span>Long</span>
+        <span><span class="swatch short"></span>Short</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="chart" id="chart">
+        <div class="empty"><strong>Waiting for events</strong>No symbols have been seen yet.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="table-card" aria-labelledby="table-title" hidden>
+    <div class="card-head">
+      <div>
+        <h2 class="card-title" id="table-title">All positions</h2>
+        <p class="card-sub">The same data as the chart, readable without colour.</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <table>
+        <caption class="visually-hidden">Net position per symbol</caption>
+        <thead>
+          <tr><th scope="col">Symbol</th><th scope="col">Side</th><th scope="col">Net position</th></tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Served by the Position Maintaining Service &middot;
+    <code>GET /position</code> &middot; <code>GET /health</code> &middot; <code>/docs</code>
+  </footer>
+</div>
+
+<div class="tooltip" id="tooltip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const POLL_MS = 1000;
+
+  /* Layout constants, kept in step with the grid in the stylesheet. */
+  const SYMBOL_COL = 108;       /* .row grid column 1, tip layout   */
+  const SYMBOL_COL_COMPACT = 84;/* .row grid column 1, compact      */
+  const VALUE_COL = 58;         /* .row grid column 3, compact      */
+  const GAP = 12;               /* .row column gap                  */
+  const LABEL_GUTTER = 10;      /* clear space between tip and text */
+  /* Below this the tip layout still fits, but the bars get too short to
+     compare at a glance — so hand the width back to the bars and move the
+     values into their own column instead. */
+  const MIN_BAR_PCT = 30;
+
+  /* Measuring the real rendered text is what keeps a value label from ever
+     overflowing its track. A fixed percentage reserve looks fine on a wide
+     screen and clips at 375px. */
+  const measure = document.createElement("canvas").getContext("2d");
+  let labelFont = "560 12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+  function textWidth(text) {
+    measure.font = labelFont;
+    return measure.measureText(text).width;
+  }
+
+  const el = (id) => document.getElementById(id);
+  const nf = new Intl.NumberFormat("en-US");
+  const fmt = (n) => nf.format(n);
+  const signed = (n) => (n > 0 ? "+" : "") + nf.format(n);
+
+  const state = {
+    positions: {},
+    health: null,
+    side: "all",
+    sort: "value",
+    query: "",
+    paused: false,
+    stale: false,
+    everLoaded: false,
+  };
+
+  /* --- Rendering ---------------------------------------------------------- */
+
+  const sideOf = (v) => (v > 0 ? "long" : v < 0 ? "short" : "flat");
+
+  function visibleRows() {
+    const q = state.query.trim().toLowerCase();
+    let rows = Object.entries(state.positions).map(([symbol, value]) => ({
+      symbol, value, side: sideOf(value),
+    }));
+    if (state.side !== "all") rows = rows.filter((r) => r.side === state.side);
+    if (q) rows = rows.filter((r) => r.symbol.toLowerCase().includes(q));
+    rows.sort(state.sort === "symbol"
+      ? (a, b) => a.symbol.localeCompare(b.symbol)
+      : (a, b) => b.value - a.value);
+    return rows;
+  }
+
+  function renderFigures() {
+    const values = Object.values(state.positions);
+    el("fig-symbols").textContent = values.length ? fmt(values.length) : "0";
+    el("fig-long").textContent = fmt(values.filter((v) => v > 0).length);
+    el("fig-short").textContent = fmt(values.filter((v) => v < 0).length);
+    el("fig-flat").textContent = fmt(values.filter((v) => v === 0).length);
+
+    if (state.health) {
+      el("fig-events").textContent = fmt(state.health.applied_events);
+      const dupes = state.health.duplicate_events;
+      el("fig-dupes").textContent = dupes
+        ? `${fmt(dupes)} duplicate${dupes === 1 ? "" : "s"} ignored`
+        : "No duplicates seen";
+    }
+  }
+
+  function renderChart(rows) {
+    const chart = el("chart");
+    if (!rows.length) {
+      chart.innerHTML = state.everLoaded && Object.keys(state.positions).length
+        ? `<div class="empty"><strong>No matches</strong>No symbol matches the current filter.</div>`
+        : `<div class="empty"><strong>Waiting for events</strong>No symbols have been seen yet.</div>`;
+      return;
+    }
+
+    /* Scale against the largest absolute position so both arms share one
+       scale — a diverging chart with two scales would misstate the sides. */
+    const max = Math.max(...rows.map((r) => Math.abs(r.value)), 1);
+    const labels = rows.map((r) => signed(r.value));
+
+    /* Decide the layout from measured geometry: reserve exactly as much room
+       as the widest label actually needs, and fall back to a value column when
+       that reserve would leave the bars too short to compare. */
+    const chartWidth = chart.clientWidth || 640;
+    const widest = Math.max(...labels.map(textWidth), 0);
+    const tipTrack = chartWidth - SYMBOL_COL - GAP;
+    const reservePct = (widest + LABEL_GUTTER) / Math.max(tipTrack, 1) * 100;
+    const tipBarPct = 50 - reservePct;
+    const compact = tipBarPct < MIN_BAR_PCT;
+    const maxBarPct = compact ? 50 : tipBarPct;
+
+    chart.classList.toggle("compact", compact);
+
+    const parts = ['<div class="zero-line" aria-hidden="true"></div>'];
+    rows.forEach((r, i) => {
+      const pct = Math.abs(r.value) / max * maxBarPct;
+      const label = labels[i];
+      const bar = r.value === 0
+        ? '<div class="bar flat"></div>'
+        : `<div class="bar ${r.side}" style="width:${pct}%"></div>`;
+
+      let value;
+      if (compact) {
+        value = `<div class="row-value">${label}</div>`;
+      } else {
+        const tip = `calc(50% + ${pct}% + ${LABEL_GUTTER}px)`;
+        value = r.value >= 0
+          ? `<div class="bar-value" style="left:${tip}">${label}</div>`
+          : `<div class="bar-value" style="right:${tip}">${label}</div>`;
+      }
+
+      parts.push(
+        `<div class="row" tabindex="0" role="group"` +
+        ` data-symbol="${r.symbol}" data-value="${r.value}"` +
+        ` aria-label="${r.symbol}: net ${label} shares, ${r.side}">` +
+          `<div class="row-symbol">${r.symbol}</div>` +
+          `<div class="track">${bar}${compact ? "" : value}</div>` +
+          (compact ? value : "") +
+        `</div>`
+      );
+    });
+
+    const half = fmt(Math.round(max));
+    parts.push(
+      `<div class="axis" aria-hidden="true">` +
+        `<div class="axis-track">` +
+          `<span>-${half}</span><span>0</span><span>${half}</span>` +
+        `</div>` +
+      `</div>`
+    );
+    chart.innerHTML = parts.join("");
+
+    /* Take the measuring font from the element that was actually rendered, so
+       the reserve is computed against the real face rather than a guess. */
+    const sample = chart.querySelector(".bar-value, .row-value");
+    if (sample) {
+      const cs = getComputedStyle(sample);
+      labelFont = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    }
+  }
+
+  function renderTable(rows) {
+    el("table-body").innerHTML = rows.length
+      ? rows.map((r) => {
+          const side = r.side === "long" ? "Long" : r.side === "short" ? "Short" : "Flat";
+          return `<tr><td>${r.symbol}</td><td><span class="pill">${side}</span></td>` +
+                 `<td class="value">${signed(r.value)}</td></tr>`;
+        }).join("")
+      : `<tr><td colspan="3" style="text-align:center;color:var(--ink-muted);padding:24px">` +
+        `No symbol matches the current filter.</td></tr>`;
+  }
+
+  function render() {
+    const rows = visibleRows();
+    renderFigures();
+    renderChart(rows);
+    renderTable(rows);
+    document.querySelectorAll(".card").forEach((c) => c.classList.toggle("stale", state.stale));
+  }
+
+  /* --- Status ------------------------------------------------------------- */
+
+  function setStatus(stateName, text) {
+    el("status").dataset.state = stateName;
+    el("status-text").textContent = text;
+  }
+
+  /* --- Polling ------------------------------------------------------------ */
+
+  async function poll() {
+    if (state.paused) return;
+    try {
+      const [posRes, healthRes] = await Promise.all([fetch("/position"), fetch("/health")]);
+      if (!posRes.ok || !healthRes.ok) throw new Error(`HTTP ${posRes.status}/${healthRes.status}`);
+      state.positions = await posRes.json();
+      state.health = await healthRes.json();
+      state.stale = false;
+      state.everLoaded = true;
+      setStatus("live", "Live");
+      render();
+    } catch (err) {
+      /* Hold the last good render rather than blanking the view; the status
+         chip carries the failure so the numbers are never silently stale. */
+      state.stale = true;
+      setStatus("error", "Service unreachable");
+      document.querySelectorAll(".card").forEach((c) => c.classList.add("stale"));
+    }
+  }
+
+  /* --- Tooltip ------------------------------------------------------------ */
+
+  const tooltip = el("tooltip");
+
+  function showTooltip(row, x, y) {
+    const symbol = row.dataset.symbol;
+    const value = Number(row.dataset.value);
+    const side = value > 0 ? "Long" : value < 0 ? "Short" : "Flat";
+    const verb = value > 0 ? "net bought" : value < 0 ? "net sold" : "fully closed";
+    tooltip.innerHTML =
+      `<b>${symbol}</b><br>` +
+      `<span class="t-value">${signed(value)}</span> shares &middot; ${side}<br>` +
+      `<span style="opacity:.75">${verb}</span>`;
+    tooltip.dataset.show = "true";
+    tooltip.setAttribute("aria-hidden", "false");
+    const box = tooltip.getBoundingClientRect();
+    const left = Math.min(Math.max(8, x + 14), window.innerWidth - box.width - 8);
+    const top = Math.min(Math.max(8, y + 14), window.innerHeight - box.height - 8);
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function hideTooltip() {
+    tooltip.dataset.show = "false";
+    tooltip.setAttribute("aria-hidden", "true");
+  }
+
+  document.addEventListener("mousemove", (e) => {
+    const row = e.target.closest?.(".row");
+    if (row) showTooltip(row, e.clientX, e.clientY); else hideTooltip();
+  });
+
+  /* Keyboard focus surfaces exactly what hover does. */
+  document.addEventListener("focusin", (e) => {
+    const row = e.target.closest?.(".row");
+    if (!row) return hideTooltip();
+    const r = row.getBoundingClientRect();
+    showTooltip(row, r.left + 40, r.top);
+  });
+  document.addEventListener("focusout", hideTooltip);
+  document.addEventListener("scroll", hideTooltip, { passive: true });
+
+  /* --- Controls ----------------------------------------------------------- */
+
+  function bindSegment(attr, key) {
+    document.querySelectorAll(`[data-${attr}]`).forEach((button) => {
+      button.addEventListener("click", () => {
+        state[key] = button.dataset[attr];
+        document.querySelectorAll(`[data-${attr}]`).forEach((b) =>
+          b.setAttribute("aria-pressed", String(b === button)));
+        render();
+      });
+    });
+  }
+  bindSegment("side", "side");
+  bindSegment("sort", "sort");
+
+  el("search").addEventListener("input", (e) => {
+    state.query = e.target.value;
+    render();
+  });
+
+  el("pause").addEventListener("click", () => {
+    state.paused = !state.paused;
+    el("pause").setAttribute("aria-pressed", String(state.paused));
+    el("pause").textContent = state.paused ? "Resume" : "Pause";
+    if (state.paused) setStatus("paused", "Paused"); else poll();
+  });
+
+  el("theme").addEventListener("click", () => {
+    const dark = document.documentElement.dataset.theme === "dark"
+      || (!document.documentElement.dataset.theme
+          && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "light" : "dark";
+  });
+
+  el("toggle-table").addEventListener("click", () => {
+    const card = el("table-card");
+    const shown = !card.hidden;
+    card.hidden = shown;
+    el("toggle-table").setAttribute("aria-pressed", String(!shown));
+  });
+
+  /* The tip-versus-column decision depends on the rendered width, so a resize
+     has to re-run it. Debounced so a drag does not thrash the layout. */
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(render, 150);
+  });
+
+  poll();
+  setInterval(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>

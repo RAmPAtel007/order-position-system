@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from trading.events import ValidationError, parse_event
 from trading.logging_setup import configure_logging
@@ -31,6 +32,10 @@ DEFAULT_PORT = 8000
 HTTP_OK = 200
 HTTP_ACCEPTED = 202
 HTTP_UNPROCESSABLE_CONTENT = 422
+
+#: Optional read-only dashboard. A single self-contained file with no build
+#: step and no third-party assets, so it adds nothing to the dependency set.
+DASHBOARD_FILE = Path(__file__).resolve().parent / "static" / "dashboard.html"
 
 
 def create_app(store: PositionStore | None = None) -> FastAPI:
@@ -130,6 +135,24 @@ def create_app(store: PositionStore | None = None) -> FastAPI:
             "duplicate_events": stats.duplicate_events,
             "symbols": stats.symbols,
         }
+
+    @app.get("/", include_in_schema=False)
+    def dashboard() -> Response:
+        """Serve the read-only dashboard, or point at the API if it is absent.
+
+        The dashboard reads the same public endpoints any other client would,
+        so the API remains the product and this stays a view over it. Missing
+        the file is not an error worth failing on: the service's job is the
+        API, so it degrades to a pointer rather than a 500.
+        """
+        if DASHBOARD_FILE.is_file():
+            return FileResponse(DASHBOARD_FILE, media_type="text/html")
+        return JSONResponse(
+            {
+                "service": "Position Maintaining Service",
+                "endpoints": ["/position", "/events", "/health", "/docs"],
+            }
+        )
 
     return app
 

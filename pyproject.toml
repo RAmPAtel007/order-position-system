@@ -24,6 +24,10 @@ order-update-service = "trading.order_update_service:main"
 [tool.setuptools.packages.find]
 include = ["trading*"]
 
+[tool.setuptools.package-data]
+# Ship the dashboard with the package so an installed copy serves it too.
+trading = ["static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"

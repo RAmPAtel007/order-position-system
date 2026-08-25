@@ -46,6 +46,8 @@ python -m trading.order_update_service --csv data/order_updates.csv --target-url
 curl http://127.0.0.1:8000/position
 ```
 
+Or open <http://127.0.0.1:8000> for the live dashboard described below.
+
 The supplied file holds 1000 events; at the default 50/second the run takes
 about 20 seconds. Positions are queryable throughout.
 
@@ -65,7 +67,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-188 tests, roughly 22 seconds. Useful variations:
+204 tests, roughly 23 seconds. Useful variations:
 
 ```bash
 python -m pytest -v
@@ -89,6 +91,7 @@ python -m pytest --ignore=tests/test_end_to_end.py -q
 | `tests/test_position_api.py` | `GET /position`, ingest outcomes, concurrent reads during ingest |
 | `tests/test_order_update_service.py` | The pipeline, continuing past invalid rows, CLI and env config |
 | `tests/test_end_to_end.py` | Both services over real HTTP, including as two separate OS processes |
+| `tests/test_dashboard.py` | The optional dashboard route stays self-contained and accessible |
 
 Timing-sensitive tests inject a fake clock and assert the pacing *decisions*
 rather than measuring elapsed time, so they are fast and cannot fail because
@@ -406,6 +409,64 @@ Interactive API documentation is served at `/docs`.
 
 ---
 
+## Dashboard (optional extra)
+
+`GET /` serves a live, read-only dashboard at <http://127.0.0.1:8000>.
+
+**This is beyond the stated scope** — a frontend is listed under non-goals — so
+it is built to cost nothing: one self-contained HTML file, **no new
+dependencies, no build step, no external requests**. It reads the same public
+`/position` and `/health` endpoints any other client would, so the API stays the
+product and this stays a view over it. Delete `trading/static/` and the service
+still runs; `/` degrades to a JSON pointer rather than failing.
+
+It shows a diverging bar chart of net position per symbol, a KPI row, filters by
+side and symbol, and a table view.
+
+### The design decisions worth explaining
+
+**Long/short is blue↔red, not the conventional green/red.** Green/red is the
+standard finance encoding and it is the worst possible choice for accessibility.
+Measured as colour distance under simulated colour-vision deficiency (OKLab ΔE,
+Machado 2009, severity 1.0):
+
+| Pair | Worst-case CVD ΔE | Verdict |
+| --- | --- | --- |
+| green `#0ca30c` ↔ red `#d03b3b` | **4.1** (deuteranopia) | fails — effectively one colour |
+| blue `#2a78d6` ↔ red `#e34948` | **21.6** (protanopia) | passes comfortably |
+
+Roughly 8% of men have red-green colour deficiency. Blue/red also reads as a
+genuine warm/cool opposition, which is what a diverging scale needs. Both modes'
+palettes were validated against their own surface, not eyeballed.
+
+**Colour is never the only channel.** Sign is carried three further ways: the
+bar's direction from the zero baseline, an explicit `+`/`−` on every value, and
+a Long/Short/Flat label in the table view.
+
+**No fake finance metrics.** Positions are share counts, not price-weighted, so
+summing them across symbols would produce a meaningless "total". The headline
+figure is therefore *events applied* — something the service actually knows —
+with counts of long, short, and flat symbols beside it.
+
+**The value label placement is measured, not guessed.** At full width each value
+sits at its bar's tip. Below the width where that would crowd the bars, the
+layout moves values into their own column and hands the space back to the bars.
+The switch is computed from the actual rendered text width at render time, so a
+label can never overflow or be clipped — the first version used a fixed
+percentage reserve and clipped at 375px.
+
+**Failure is visible, not silent.** If the service goes away, the dashboard holds
+the last good render, dims it, and the status chip turns red and reads "Service
+unreachable" — so numbers on screen are never quietly stale. It never blanks the
+view or flashes a skeleton on refetch.
+
+Also: light and dark are separately chosen palettes rather than an inverted one,
+every control is keyboard reachable with visible focus, hit targets are 32px
+against 18px bars, keyboard focus surfaces the same tooltip as hover, and all
+motion is behind `prefers-reduced-motion`.
+
+---
+
 ## Known limitations and trade-offs
 
 **In scope but bounded by design**
@@ -438,6 +499,10 @@ Interactive API documentation is served at `/docs`.
   faster but would need explicit sequencing to preserve order.
 - **No authentication, TLS, or rate limiting on the inbound API.** Out of scope;
   the service binds to localhost by default.
+- **The dashboard polls once a second** rather than streaming. Server-sent events
+  would be smoother, but polling keeps the service a plain request/response API
+  with no long-lived connections to manage. It is read-only: every write still
+  goes through `POST /events`.
 - **The producer's dedupe is per run.** Restarting the producer re-reads the file
   from the top; the receiver's dedupe is what keeps that harmless.
 
@@ -461,7 +526,8 @@ trading/
   order_update_service.py   Producer: read → validate → dedupe → throttle → send
   position_service.py       Consumer: FastAPI app, GET /position
   logging_setup.py          Shared log formatting
-tests/                      188 tests (see the table above)
+  static/dashboard.html     Optional read-only dashboard (no dependencies)
+tests/                      204 tests (see the table above)
 data/
   order_updates.csv         Supplied assessment data (synthetic)
   sample_invalid.csv        Malformed rows, for demonstrating the skip path
